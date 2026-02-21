@@ -1,16 +1,22 @@
 {
-  "name": "label-web",
+  "name": "web-label-printer",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json"
+    "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
+    "tauri": "tauri",
+    "dev:linux": "WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 npm run tauri dev",
+    "flatpak": "./flatpak/build.sh",
+    "flatpak:bundle": "flatpak build-bundle ~/.local/share/flatpak/repo web-label-printer.flatpak com.phomemo.weblabelprinter"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/cli": "^2.10.0",
     "@tsconfig/svelte": "^5.0.6",
     "@types/node": "^24.10.1",
     "svelte": "^5.43.8",

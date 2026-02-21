@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Web Label Printer
+Comment=Design and print labels for Phomemo Q30/D30 thermal printers
+Exec=web-label-printer
+Icon=com.phomemo.weblabelprinter
+Terminal=false
+Type=Application
+Categories=Graphics;Office;
+Keywords=label;printer;phomemo;thermal;bluetooth;
+StartupNotify=true

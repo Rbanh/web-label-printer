@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.phomemo.weblabelprinter</id>
+  <name>Web Label Printer</name>
+  <summary>Design and print labels for Phomemo thermal printers</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      A multiplatform application for designing and printing labels specifically 
+      for Phomemo Q30/D30 series Bluetooth thermal printers.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Object-based canvas with full manipulation (move, scale, rotate, align)</li>
+      <li>Integrated icon library with over 200,000 icons</li>
+      <li>Professional typography with Google Fonts and built-in font library</li>
+      <li>Precision tools with visual grid and smart alignment</li>
+      <li>Template system for saving and loading label designs</li>
+      <li>Native Bluetooth support via Tauri</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">com.phomemo.weblabelprinter.desktop</launchable>
+  <url type="homepage">https://github.com/anomalyco/web-label-printer</url>
+  <provides>
+    <binary>web-label-printer</binary>
+  </provides>
+  <content_rating type="oars-1.1" />
+</component>

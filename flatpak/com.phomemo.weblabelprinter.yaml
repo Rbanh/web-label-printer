@@ -1,0 +1,55 @@
+app-id: com.phomemo.weblabelprinter
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node22
+command: web-label-printer
+
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  - --share=network
+  - --system-talk-name=org.bluez
+  - --env=WEBKIT_DISABLE_DMABUF_RENDERER=1
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin
+  env:
+    CARGO_HOME: /run/build/web-label-printer/cargo
+    npm_config_nodedir: /usr/lib/sdk/node22
+
+modules:
+  - name: web-label-printer
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      - |
+        # Install npm dependencies
+        npm install
+        
+        # Build Tauri app with embedded frontend (no bundles, just binary)
+        npm run tauri build -- --no-bundle
+        
+        # Install binary
+        install -Dm755 src-tauri/target/release/web-label-printer ${FLATPAK_DEST}/bin/web-label-printer
+        
+        # Install desktop file
+        install -Dm644 flatpak/com.phomemo.weblabelprinter.desktop ${FLATPAK_DEST}/share/applications/com.phomemo.weblabelprinter.desktop
+        
+        # Install icons (multiple sizes for proper desktop integration)
+        install -Dm644 src-tauri/icons/32x32/icon.png ${FLATPAK_DEST}/share/icons/hicolor/32x32/apps/com.phomemo.weblabelprinter.png
+        install -Dm644 src-tauri/icons/128x128/icon.png ${FLATPAK_DEST}/share/icons/hicolor/128x128/apps/com.phomemo.weblabelprinter.png
+        install -Dm644 src-tauri/icons/256x256/icon.png ${FLATPAK_DEST}/share/icons/hicolor/256x256/apps/com.phomemo.weblabelprinter.png
+        install -Dm644 src-tauri/icons/512x512/icon.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/com.phomemo.weblabelprinter.png
+        
+        # Install metainfo
+        install -Dm644 flatpak/com.phomemo.weblabelprinter.metainfo.xml ${FLATPAK_DEST}/share/metainfo/com.phomemo.weblabelprinter.metainfo.xml
+    sources:
+      - type: dir
+        path: ..
