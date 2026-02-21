@@ -3,7 +3,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: './',
+  base: process.env.GITHUB_PAGES ? '/web-label-printer/' : './',
   plugins: [svelte()],
   server: {
     port: 5173,
