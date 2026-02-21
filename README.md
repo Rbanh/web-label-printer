@@ -2,7 +2,7 @@
 
 A modern, cross-platform desktop application for designing and printing labels for Phomemo Q30/D30 series Bluetooth thermal printers. Built with Tauri, Svelte 5, and Fabric.js.
 
-![Web Label Printer Screenshot](AppIcon.png)
+![Web Label Printer Application](screenshot-app.png)
 
 ## Features
 
