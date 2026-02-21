@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, settled, tick } from "svelte";
+  import * as fabric from "fabric";
   import Emoji from "./lib/Emoji.svelte";
 
   type CanvasContext =
@@ -34,6 +35,12 @@
     localStorage.getItem("auto_font_size") !== "false",
   );
   let font_size = $state(parseFloat(localStorage.getItem("font_size") || "48"));
+  let search_all_devices = $state(
+    localStorage.getItem("search_all_devices") === "true",
+  );
+  let horizontal_align = $state(localStorage.getItem("horizontal_align") || "center");
+  let vertical_align = $state(localStorage.getItem("vertical_align") || "middle");
+  let selected_device: BluetoothDevice | undefined = $state();
 
   // Save to localStorage
   $effect(() => {
@@ -47,6 +54,9 @@
   $effect(() => {
     localStorage.setItem("auto_font_size", auto_font_size.toString());
     localStorage.setItem("font_size", font_size.toString());
+    localStorage.setItem("search_all_devices", search_all_devices.toString());
+    localStorage.setItem("horizontal_align", horizontal_align);
+    localStorage.setItem("vertical_align", vertical_align);
   });
 
   // Save text to sessionStorage
@@ -55,6 +65,44 @@
   });
   let canvas: HTMLCanvasElement | undefined = $state();
   let pixelData = new Uint8Array();
+
+  let editor_mode = $state(localStorage.getItem("editor_mode") || "visual");
+  let visual_editor: HTMLDivElement | undefined = $state();
+
+  $effect(() => {
+    localStorage.setItem("editor_mode", editor_mode);
+  });
+
+  function toHtml(md: string) {
+    return md
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\[\|(.*?)\|\]/g, '<span class="html-barcode">$1</span>')
+      .replace(/\^\^(.*?)\^\^/g, '<span class="html-big">$1</span>')
+      .replace(/__(.*?)__/g, '<span class="html-small">$1</span>')
+      .replace(/\*(.*?)\*/g, "<strong>$1</strong>")
+      .replace(/_(.*?)_/g, "<em>$1</em>")
+      .replace(/\n/g, "<br>");
+  }
+
+  function fromHtml(html: string) {
+    return html
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<div>(.*?)<\/div>/gi, "\n$1")
+      .replace(/<span class="html-barcode">(.*?)<\/span>/gi, "[|$1|]")
+      .replace(/<span class="html-big">(.*?)<\/span>/gi, "^^$1^^")
+      .replace(/<span class="html-small">(.*?)<\/span>/gi, "__$1__")
+      .replace(/<strong>(.*?)<\/strong>/gi, "*$1*")
+      .replace(/<b>(.*?)<\/b>/gi, "*$1*")
+      .replace(/<em>(.*?)<\/em>/gi, "_$1_")
+      .replace(/<i>(.*?)<\/i>/gi, "_$1_")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&")
+      .replace(/<[^>]*>/g, ""); // Strip remaining tags
+  }
 
   function renderLine(
     ctx: CanvasContext,
@@ -250,7 +298,15 @@
 
     ctx.textBaseline = "alphabetic";
     ctx.fillStyle = "#000";
-    var y = (label_height - font_sz.total_hg) / 2;
+
+    // Vertical alignment calculation
+    var y = margin_y;
+    if (vertical_align === "middle") {
+      y = (label_height - font_sz.total_hg) / 2;
+    } else if (vertical_align === "bottom") {
+      y = label_height - font_sz.total_hg - margin_y;
+    }
+
     for (var i = 0; i < lines.length; i++) {
       const line = lines[i];
 
@@ -258,7 +314,15 @@
       const m = measureLine(ctx, line, sz);
 
       const line_wd = m.right + m.left;
-      var x = (label_width - line_wd) / 2 + m.left;
+
+      // Horizontal alignment calculation
+      var x = margin_x + m.left;
+      if (horizontal_align === "center") {
+        x = (label_width - line_wd) / 2 + m.left;
+      } else if (horizontal_align === "right") {
+        x = label_width - line_wd - margin_x + m.left;
+      }
+
       y += i ? font_sz.line_hg : m.ascent;
 
       renderLine(ctx, lines[i], sz, (str) => {
@@ -371,16 +435,62 @@
     });
   });
 
+  async function selectDevice() {
+    if (!navigator.bluetooth) {
+      alert(
+        "Web Bluetooth is not supported by your browser or in this context (requires HTTPS or localhost).",
+      );
+      return;
+    }
+    const options = search_all_devices
+      ? {
+          acceptAllDevices: true,
+          optionalServices: ["0000ff00-0000-1000-8000-00805f9b34fb"],
+        }
+      : {
+          filters: [
+            { services: ["0000ff00-0000-1000-8000-00805f9b34fb"] },
+            { namePrefix: "Q30" },
+            { namePrefix: "D30" },
+            { namePrefix: "Phomemo" },
+          ],
+          optionalServices: ["0000ff00-0000-1000-8000-00805f9b34fb"],
+        };
+    selected_device = await navigator.bluetooth.requestDevice(options);
+  }
+
   async function printLabel() {
+    if (!navigator.bluetooth) {
+      alert(
+        "Web Bluetooth is not supported by your browser or in this context (requires HTTPS or localhost).",
+      );
+      return;
+    }
     try {
-      const device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: ["0000ff00-0000-1000-8000-00805f9b34fb"] }],
-      });
-      const server = await device.gatt?.connect();
-      const service = await server?.getPrimaryService(
+      // Try to find a previously paired device if none is selected
+      if (!selected_device && navigator.bluetooth.getDevices) {
+        const devices = await navigator.bluetooth.getDevices();
+        selected_device = devices.find(
+          (d) =>
+            d.name?.includes("Q30") ||
+            d.name?.includes("D30") ||
+            d.name?.includes("Phomemo"),
+        );
+      }
+
+      // If still no device, ask user to select one
+      if (!selected_device) {
+        await selectDevice();
+      }
+
+      if (!selected_device || !selected_device.gatt) {
+        throw new Error("No Bluetooth device selected or supported.");
+      }
+      const server = await selected_device.gatt.connect();
+      const service = await server.getPrimaryService(
         "0000ff00-0000-1000-8000-00805f9b34fb",
       );
-      const characteristic = await service?.getCharacteristic(
+      const characteristic = await service.getCharacteristic(
         "0000ff02-0000-1000-8000-00805f9b34fb",
       );
 
@@ -403,15 +513,16 @@
       // ESC d 00 : Print and feed 0 lines.
       const footer = new Uint8Array([0x1b, 0x64, 0x00]);
 
-      await characteristic?.writeValueWithResponse(header);
+      await characteristic.writeValueWithResponse(header);
       for (let i = 0; i < pixelData.length; i += 128) {
         const buf = pixelData.slice(i, i + 128);
         // TODO: last packet should be padded??
-        await characteristic?.writeValueWithoutResponse(buf);
+        await characteristic.writeValueWithoutResponse(buf);
       }
-      await characteristic?.writeValueWithResponse(footer);
+      await characteristic.writeValueWithResponse(footer);
     } catch (err) {
-      console.log(`Error printing: ${err}`);
+      alert(`Error printing: ${err}`);
+      console.error(`Error printing: ${err}`);
     }
   }
 
@@ -452,55 +563,201 @@
 <main>
   <h1>Web Label Printer</h1>
   <div class="r">
-    <div class="bar">
-      <button
-        onclick={() => setAttribute("*")}
-        class="bold"
-        aria-label="Bold Text"
-      >
-      </button>
-      <button
-        onclick={() => setAttribute("_")}
-        class="italic"
-        aria-label="Italic Text"
-      >
-      </button>
-      <button
-        onclick={() => setAttribute("__", "__")}
-        class="fnt-small"
-        aria-label="Smaller Font"
-      >
-      </button>
-      <button
-        onclick={() => setAttribute("^^", "^^")}
-        class="fnt-big"
-        aria-label="Bigger Font"
-      >
-      </button>
-      <button
-        onclick={() => setAttribute("[|", "|]")}
-        class="barcode"
-        aria-label="Barcode"
-      >
-      </button>
-      <button
-        class="smile"
-        aria-pressed={show_emoji}
-        aria-label="Show Emoji Selector"
-        onclick={() => {
-          show_emoji = !show_emoji;
-        }}
-      >
-      </button>
+    <div class="editor-container">
+      <div class="editor-tabs">
+        <button
+          class="tab-btn"
+          aria-pressed={editor_mode === "visual"}
+          onclick={() => {
+            if (editor_mode === "raw" && visual_editor) {
+              visual_editor.innerHTML = toHtml(text);
+            }
+            editor_mode = "visual";
+          }}
+        >
+          Visual Editor
+        </button>
+        <button
+          class="tab-btn"
+          aria-pressed={editor_mode === "raw"}
+          onclick={() => {
+            if (editor_mode === "visual" && visual_editor) {
+              text = fromHtml(visual_editor.innerHTML);
+            }
+            editor_mode = "raw";
+          }}
+        >
+          Raw Text (Markdown)
+        </button>
+      </div>
+
+      <div class="bar">
+        {#if editor_mode === "visual"}
+          <button
+            onclick={() => document.execCommand("bold")}
+            class="bold"
+            aria-label="Bold Text"
+          ></button>
+          <button
+            onclick={() => document.execCommand("italic")}
+            class="italic"
+            aria-label="Italic Text"
+          ></button>
+          <button
+            onclick={() => {
+              const sel = window.getSelection();
+              if (sel && sel.rangeCount > 0) {
+                const range = sel.getRangeAt(0);
+                const span = document.createElement("span");
+                span.className = "html-small";
+                span.appendChild(range.extractContents());
+                range.insertNode(span);
+                if (visual_editor) text = fromHtml(visual_editor.innerHTML);
+              }
+            }}
+            class="fnt-small"
+            aria-label="Smaller Font"
+          ></button>
+          <button
+            onclick={() => {
+              const sel = window.getSelection();
+              if (sel && sel.rangeCount > 0) {
+                const range = sel.getRangeAt(0);
+                const span = document.createElement("span");
+                span.className = "html-big";
+                span.appendChild(range.extractContents());
+                range.insertNode(span);
+                if (visual_editor) text = fromHtml(visual_editor.innerHTML);
+              }
+            }}
+            class="fnt-big"
+            aria-label="Bigger Font"
+          ></button>
+          <button
+            onclick={() => {
+              const sel = window.getSelection();
+              if (sel && sel.rangeCount > 0) {
+                const range = sel.getRangeAt(0);
+                const span = document.createElement("span");
+                span.className = "html-barcode";
+                span.appendChild(range.extractContents());
+                range.insertNode(span);
+                if (visual_editor) text = fromHtml(visual_editor.innerHTML);
+              }
+            }}
+            class="barcode"
+            aria-label="Barcode"
+          ></button>
+        {:else}
+          <button
+            onclick={() => setAttribute("*")}
+            class="bold"
+            aria-label="Bold Text"
+          ></button>
+          <button
+            onclick={() => setAttribute("_")}
+            class="italic"
+            aria-label="Italic Text"
+          ></button>
+          <button
+            onclick={() => setAttribute("__", "__")}
+            class="fnt-small"
+            aria-label="Smaller Font"
+          ></button>
+          <button
+            onclick={() => setAttribute("^^", "^^")}
+            class="fnt-big"
+            aria-label="Bigger Font"
+          ></button>
+          <button
+            onclick={() => setAttribute("[|", "|]")}
+            class="barcode"
+            aria-label="Barcode"
+          ></button>
+        {/if}
+
+        <button
+          class="smile"
+          aria-pressed={show_emoji}
+          aria-label="Show Emoji Selector"
+          onclick={() => {
+            show_emoji = !show_emoji;
+          }}
+        ></button>
+
+        <div class="separator"></div>
+
+        <button
+          onclick={() => (horizontal_align = "left")}
+          class="align-left"
+          aria-pressed={horizontal_align === "left"}
+          aria-label="Align Left"
+        ></button>
+        <button
+          onclick={() => (horizontal_align = "center")}
+          class="align-center"
+          aria-pressed={horizontal_align === "center"}
+          aria-label="Align Center"
+        ></button>
+        <button
+          onclick={() => (horizontal_align = "right")}
+          class="align-right"
+          aria-pressed={horizontal_align === "right"}
+          aria-label="Align Right"
+        ></button>
+
+        <div class="separator"></div>
+
+        <button
+          onclick={() => (vertical_align = "top")}
+          class="align-top"
+          aria-pressed={vertical_align === "top"}
+          aria-label="Align Top"
+        ></button>
+        <button
+          onclick={() => (vertical_align = "middle")}
+          class="align-middle"
+          aria-pressed={vertical_align === "middle"}
+          aria-label="Align Middle"
+        ></button>
+        <button
+          onclick={() => (vertical_align = "bottom")}
+          class="align-bottom"
+          aria-pressed={vertical_align === "bottom"}
+          aria-label="Align Bottom"
+        ></button>
+      </div>
+
+      {#if show_emoji}
+        <Emoji
+          onselect={(emoji: string) => {
+            if (editor_mode === "visual" && visual_editor) {
+              document.execCommand("insertText", false, emoji);
+              text = fromHtml(visual_editor.innerHTML);
+            } else {
+              insertText(emoji);
+            }
+          }}
+        />
+      {/if}
+
+      {#if editor_mode === "visual"}
+        <div
+          bind:this={visual_editor}
+          contenteditable="true"
+          class="visual-editor"
+          oninput={(e) => (text = fromHtml(e.currentTarget.innerHTML))}
+        >
+          {@html toHtml(text)}
+        </div>
+      {:else}
+        <textarea
+          bind:this={textarea}
+          bind:value={text}
+          placeholder="Write text here..."
+        ></textarea>
+      {/if}
     </div>
-    {#if show_emoji}
-      <Emoji onselect={insertText} />
-    {/if}
-    <textarea
-      bind:this={textarea}
-      bind:value={text}
-      placeholder="Write text here..."
-    ></textarea>
     <details>
       <summary>⚙️ Configuration</summary>
       <div class="config">
@@ -545,6 +802,13 @@
           Automatic Font Size
         </label>
         <label>
+          <input type="checkbox" bind:checked={search_all_devices} />
+          Show All Bluetooth Devices (Troubleshooting)
+        </label>
+        <p style="font-size: 0.8em; color: #666; margin: 0;">
+          Tip: Ensure the printer is <strong>unpaired/disconnected</strong> from your system's Bluetooth settings before searching.
+        </p>
+        <label>
           Font Size:
           <input
             type="range"
@@ -568,7 +832,12 @@
         </label>
       </div>
     </details>
-    <button onclick={printLabel}>Print Label</button>
+    <div class="actions">
+      <button onclick={selectDevice} class="connect-btn">
+        {selected_device?.name ? `Connected to ${selected_device.name}` : "Connect Printer"}
+      </button>
+      <button onclick={printLabel} class="print-btn">Print Label</button>
+    </div>
     <div class="l">
       <canvas bind:this={canvas} width={label_width} height={label_height}>
       </canvas>
@@ -626,6 +895,7 @@
     text-align: left;
   }
   textarea,
+  .visual-editor,
   button,
   canvas {
     box-sizing: border-box;
@@ -633,19 +903,82 @@
     border: 1px solid #ccc;
     border-radius: 12px;
   }
+  .editor-container {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid #ccc;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .editor-tabs {
+    display: flex;
+    background-color: #eee;
+    border-bottom: 1px solid #ccc;
+  }
+  .tab-btn {
+    flex: 1;
+    border: none;
+    border-radius: 0;
+    padding: 8px;
+    font-size: 0.9em;
+    background-color: transparent;
+  }
+  .tab-btn[aria-pressed="true"] {
+    background-color: #fff;
+    font-weight: bold;
+  }
+  .editor-container .bar {
+    border: none;
+    border-bottom: 1px solid #eee;
+    padding: 8px;
+    background-color: #f9f9f9;
+    border-radius: 0;
+  }
+  textarea,
+  .visual-editor {
+    border: none;
+    border-radius: 0;
+    min-height: 150px;
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 24px;
+    padding: 12px;
+    background-color: #fff;
+    text-align: left;
+  }
   textarea {
     field-sizing: content;
     min-height: 1lh;
     max-height: 10lh;
     overflow: hidden;
     resize: none;
-    font-size: 24px;
-    padding: 8px;
     background-color: #ccf;
     transition: background-color 0.25s ease-in-out;
   }
+  .visual-editor:focus {
+    outline: none;
+    background-color: #fdfdfd;
+  }
   textarea:hover {
     background-color: #ddf;
+  }
+  :global(.html-barcode) {
+    background-color: #ffe0b2;
+    font-family: monospace;
+    padding: 0 4px;
+    border-radius: 4px;
+    border: 1px dashed #f57c00;
+  }
+  :global(.html-big) {
+    font-size: 1.4em;
+    color: #2e7d32;
+    text-decoration: underline;
+  }
+  :global(.html-small) {
+    font-size: 0.7em;
+    color: #1565c0;
   }
   canvas {
     border-radius: 32px;
@@ -658,6 +991,26 @@
     background-color: #ddd;
     cursor: pointer;
     transition: background-color 0.25s ease-in-out;
+  }
+  .actions {
+    display: flex;
+    gap: 1em;
+    width: 100%;
+  }
+  .actions button {
+    flex: 1;
+  }
+  .connect-btn {
+    background-color: #f0f0f0;
+    color: #333;
+  }
+  .print-btn {
+    background-color: #4caf50;
+    color: white;
+    border-color: #45a049;
+  }
+  .print-btn:hover {
+    background-color: #45a049;
   }
   .bar button:hover,
   button:hover {
@@ -733,5 +1086,34 @@
   .fnt-big {
     background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLWFhcnJvdy11cC1pY29uIGx1Y2lkZS1hLWFycm93LXVwIj48cGF0aCBkPSJtMTQgMTEgNC00IDQgNCIvPjxwYXRoIGQ9Ik0xOCAxNlY3Ii8+PHBhdGggZD0ibTIgMTYgNC4wMzktOS42OWEuNS41IDAgMCAxIC45MjMgMEwxMSAxNiIvPjxwYXRoIGQ9Ik0zLjMwNCAxM2g2LjM5MiIvPjwvc3ZnPg==")
       no-repeat;
+  }
+  .align-left {
+    background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLWFsaWduLWxlZnQiPjxsaW5lIHgxPSIxNyIgeDI9IjMiIHkxPSI2IiB5Mj0iNiIvPjxsaW5lIHgxPSIxOSIgeDI9IjMiIHkxPSIxMiIgeTI9IjEyIi8+PGxpbmUgeDE9IjExIiB4Mj0iMyIgeTE9IjE4IiB5Mj0iMTgiLz48L3N2Zz4=")
+      no-repeat;
+  }
+  .align-center {
+    background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLWFsaWduLWNlbnRlciI+PGxpbmUgeDE9IjIxIiB4Mj0iMyIgeTE9IjYiIHkyPSI2Ii8+PGxpbmUgeDE9IjE3IiB4Mj0iNyIgeTE9IjEyIiB5Mj0iMTIiLz48bGluZSB4MT0iMTkiIHgyPSI1IiB5MT0iMTgiIHkyPSIxOCIvPjwvc3ZnPg==")
+      no-repeat;
+  }
+  .align-right {
+    background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLWFsaWduLXJpZ2h0Ij48bGluZSB4MT0iMjEiIHgyPSI3IiB5MT0iNiIgeTI9IjYiLz48bGluZSB4MT0iMjEiIHgyPSIzIiB5MT0iMTIiIHkyPSIxMiIvPjxsaW5lIHgxPSIyMSIgeDI9IjEzIiB5MT0iMTgiIHkyPSIxOCIvPjwvc3ZnPg==")
+      no-repeat;
+  }
+  .align-top {
+    background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLWJvdHRvbS1wYW5lbCI+PHJlY3Qgd2lkdGg9IjIwIiBoZWlnaHQ9IjE2IiB4PSIyIiB5PSIzIiByeD0iMiIvPjxsaW5lIHgxPSIyIiB4Mj0iMjIiIHkxPSI3IiB5Mj0iNyIvPjwvc3ZnPg==")
+      no-repeat;
+  }
+  .align-middle {
+    background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLW1pZGRsZS1wYW5lbCI+PHJlY3Qgd2lkdGg9IjIwIiBoZWlnaHQ9IjE2IiB4PSIyIiB5PSIzIiByeD0iMiIvPjxsaW5lIHgxPSIyIiB4Mj0iMjIiIHkxPSIxMSIgeTI9IjExIi8+PC9zdmc+")
+      no-repeat;
+  }
+  .align-bottom {
+    background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLXRvcC1wYW5lbCI+PHJlY3Qgd2lkdGg9IjIwIiBoZWlnaHQ9IjE2IiB4PSIyIiB5PSIzIiByeD0iMiIvPjxsaW5lIHgxPSIyIiB4Mj0iMjIiIHkxPSIxNSIgeTI9IjE1Ii8+PC9zdmc+")
+      no-repeat;
+  }
+  .separator {
+    width: 2px;
+    background-color: #ccc;
+    margin: 4px 0;
   }
 </style>
