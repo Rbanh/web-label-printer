@@ -60,9 +60,9 @@ jobs:
 
   build-linux-flatpak:
     needs: create-release
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     container:
-      image: bilelmoussaoui/flatpak-github-actions:gnome-48
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
       options: --privileged
     steps:
       - uses: actions/checkout@v4
@@ -122,7 +122,7 @@ jobs:
 
   build-macos-intel:
     needs: create-release
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       
@@ -140,7 +140,7 @@ jobs:
         run: npm install
       
       - name: Build Tauri app
-        run: npm run tauri build --target x86_64-apple-darwin
+        run: npm run tauri build -- --target x86_64-apple-darwin
       
       - name: Upload DMG
         uses: softprops/action-gh-release@v1
@@ -174,7 +174,7 @@ jobs:
         run: npm install
       
       - name: Build Tauri app
-        run: npm run tauri build --target aarch64-apple-darwin
+        run: npm run tauri build -- --target aarch64-apple-darwin
       
       - name: Upload DMG
         uses: softprops/action-gh-release@v1
